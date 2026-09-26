@@ -131,3 +131,46 @@ If you change a technology default in the table above, or discover that an invar
 adjustment, update this file in the same commit/session and note the reasoning — this file is
 read fresh at the start of future sessions and is the only durable record of *why* the system
 is shaped the way it is.
+
+## Decisions log
+
+Append a dated, one-paragraph entry here every time a real architectural or contract decision
+is made — this log, not a restatement of the invariants above, is what actually prevents drift
+over a long project, because it records what *this* repository specifically decided, not just
+the abstract rules.
+
+- **2026-09-26 — Repo structure.** Adopted a single monorepo with `services/` directories named
+  after pipeline stages (`ingest`, `normalize`, `detect`, `consolidate`, `query-api`,
+  `live-gateway`, `respond`), a `contracts/` directory as the single source of truth for the
+  shared domain schema (JSON Schema, generated into `contracts/gen/ts` and `contracts/gen/java`),
+  and `detections/` holding rule files plus match/non-match fixtures. Rejected grouping by
+  runtime/language (violates the pipeline-shaped-codebase invariant) and multiple separate repos
+  (the contract would drift between them).
+- **2026-09-26 — Domain contract, schema source and strictness.** Normalized events are strict
+  OCSF 1.8/1.9 JSON plus a documented platform extension object (`enrichment`, holding
+  `resolved_identity`, `asset_uid`, `access_method`, `src_geo_anomaly_score`) rather than an
+  "OCSF-like" ad hoc schema. Schema source of truth is JSON Schema in `contracts/schemas/`,
+  generated into TypeScript and Java. Wire format and generated TS both use snake_case, matching
+  OCSF, to avoid a camelCase mapping layer becoming a second place for drift.
+- **2026-09-26 — Deterministic IDs.** Event, signal, and alert IDs are derived deterministically
+  from their inputs (not random ULIDs), because Kappa replay must produce identical IDs on
+  reprocessing or dedup/exactly-once semantics break.
+- **2026-09-26 — Alert/Incident lifecycle.** A signal never reopens a resolved alert (including
+  an analyst's false-positive call) — it opens a new alert linked via `supersedes_alert_id`, so
+  resolutions stay permanent in the audit trail. When a new alert's identity/asset overlap spans
+  two open incidents, the older incident survives and the other is marked `merged` with a
+  `merged_into` pointer, rather than attaching the alert to only one.
+- **2026-09-26 — Architecture document corrections.** The original architecture document's
+  normalized-event example and detection rule contained real OCSF non-compliance: a non-OCSF
+  `logon` object and a `"VPN"` logon type value (fixed to `logon_type_id`/`auth_protocol_id`/
+  `session.uid` plus `enrichment.access_method`), an invented Sigma `temporal_sequence`
+  correlation dialect (fixed to real Sigma `event_count` + `temporal_ordered` correlation types
+  chained across named base rules), and cloud IAM privilege-escalation actions placed under the
+  wrong OCSF class (fixed to API Activity, class_uid `6003`, category_uid `6`, `api.operation`).
+  All fixed directly in `docs/architecture/SaaS-SIEM-Architecture.md` rather than patched around
+  in code — see that document's inline revision notes for detail.
+- **2026-09-26 — Existing frontend prototype is disposable.** The pre-existing `src/types/alert.ts`
+  and `src/store/alerts.ts` (hand-written IDs, 4-value severity string, no tenant_id, no
+  fingerprint, `dismissAlert` deleting rows outright) predate this contract and do not constrain
+  it. The frontend will be updated to consume the contract above; the contract is not adjusted to
+  stay compatible with the prototype.
